@@ -100,7 +100,6 @@ def calculate_roce(ticker_obj):
         
         roce_values = []
         for i in range(min(3, len(financials.columns))):
-            # Get EBIT or Operating Income
             if 'EBIT' in financials.index:
                 ebit = financials.loc['EBIT'].iloc[i]
             elif 'Operating Income' in financials.index:
@@ -108,7 +107,6 @@ def calculate_roce(ticker_obj):
             else:
                 continue
                 
-            # Get capital employed
             total_assets = balance_sheet.loc['Total Assets'].iloc[i] if 'Total Assets' in balance_sheet.index else 0
             current_liabilities = balance_sheet.loc['Current Liabilities'].iloc[i] if 'Current Liabilities' in balance_sheet.index else 0
             
@@ -134,7 +132,6 @@ def calculate_roe(ticker_obj):
         for i in range(min(3, len(financials.columns))):
             net_income = financials.loc['Net Income'].iloc[i] if 'Net Income' in financials.index else 0
             
-            # Get equity
             if 'Stockholders Equity' in balance_sheet.index:
                 equity = balance_sheet.loc['Stockholders Equity'].iloc[i]
             elif 'Total Equity Gross Minority Interest' in balance_sheet.index:
@@ -185,12 +182,10 @@ def calculate_piotroski_score(ticker_obj):
         score = 0
         
         if len(financials.columns) >= 2:
-            # Profitability
             net_income = financials.loc['Net Income'].iloc[0] if 'Net Income' in financials.index else 0
             if net_income > 0:
                 score += 1
             
-            # Operating Cash Flow
             if len(cashflow.columns) > 0:
                 ocf = cashflow.loc['Operating Cash Flow'].iloc[0] if 'Operating Cash Flow' in cashflow.index else 0
                 if ocf > 0:
@@ -211,7 +206,6 @@ def check_shariah_compliance(ticker_obj, market_cap):
         if len(balance_sheet.columns) == 0:
             return None, None, None, None, 0, False
         
-        # Get latest balance sheet data
         total_debt = balance_sheet.loc['Total Debt'].iloc[0] if 'Total Debt' in balance_sheet.index else 0
         cash = balance_sheet.loc['Cash And Cash Equivalents'].iloc[0] if 'Cash And Cash Equivalents' in balance_sheet.index else 0
         
@@ -222,12 +216,10 @@ def check_shariah_compliance(ticker_obj, market_cap):
         else:
             receivables = 0
         
-        # Calculate ratios
         debt_ratio = (total_debt / market_cap) * 100 if market_cap > 0 else None
         cash_ratio = (cash / market_cap) * 100 if market_cap > 0 else None
         receivables_ratio = (receivables / market_cap) * 100 if market_cap > 0 else None
         
-        # Check interest income
         interest_income = 0
         purification = 0
         if len(financials.columns) > 0:
@@ -236,7 +228,6 @@ def check_shariah_compliance(ticker_obj, market_cap):
             if shares_outstanding > 0:
                 purification = interest_income / shares_outstanding
         
-        # Overall compliance
         debt_ok = debt_ratio is not None and debt_ratio < 30
         cash_ok = cash_ratio is not None and cash_ratio < 30
         receivables_ok = receivables_ratio is not None and receivables_ratio < 33
@@ -283,13 +274,12 @@ def create_gauge_chart(value, title, max_value=100, thresholds=None):
     if thresholds is None:
         thresholds = {'good': 70, 'warning': 40}
     
-    # Determine color
     if value >= thresholds['good']:
-        color = "#10b981"  # Green
+        color = "#10b981"
     elif value >= thresholds['warning']:
-        color = "#f59e0b"  # Amber
+        color = "#f59e0b"
     else:
-        color = "#ef4444"  # Red
+        color = "#ef4444"
     
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
@@ -568,7 +558,6 @@ def main():
                 
                 insights = []
                 
-                # Market position
                 if market_cap >= 1e12:
                     insights.append("🏆 **Mega-cap company** with market dominance")
                 elif market_cap >= 1e11:
@@ -578,27 +567,22 @@ def main():
                 else:
                     insights.append("🌱 **Small-cap stock** with higher volatility")
                 
-                # Profitability
                 if roce and roce > 25:
                     insights.append("✨ **Exceptional capital efficiency** (ROCE > 25%)")
                 elif roce and roce > 15:
                     insights.append("✅ **Good capital returns** (ROCE 15-25%)")
                 
-                # Growth
                 if profit_growth and profit_growth > 25:
                     insights.append("🚀 **Strong profit growth** trajectory (>25% CAGR)")
                 
-                # Debt management
                 if de_ratio and de_ratio < 0.3:
                     insights.append("💪 **Conservative debt levels** (D/E < 0.3)")
                 elif de_ratio and de_ratio > 1.5:
                     insights.append("⚠️ **High leverage risk** (D/E > 1.5)")
                 
-                # Shariah
                 if shariah_compliant:
                     insights.append("🕌 **Shariah-compliant** for Islamic investing")
                 
-                # Industry
                 if 'industry' in info:
                     insights.append(f"🏭 **Industry:** {info['industry']}")
                 
@@ -611,5 +595,7 @@ def main():
             except Exception as e:
                 st.error(f"❌ Error analyzing stock: {str(e)}")
                 st.error("Please check the ticker symbol and try again.")
+
+# --- THE FIX: FLUSHED TO THE LEFT ---
 if __name__ == "__main__":
     main()
