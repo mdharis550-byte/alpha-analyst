@@ -611,6 +611,5 @@ def main():
             except Exception as e:
                 st.error(f"❌ Error analyzing stock: {str(e)}")
                 st.error("Please check the ticker symbol and try again.")
-
 if __name__ == "__main__":
     main()
