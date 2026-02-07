@@ -5,161 +5,152 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime
 
-# --- 1. PAGE CONFIG & PREMIUM THEME ---
+# --- 1. PAGE CONFIG & THEME ---
 st.set_page_config(page_title="Alpha Analyst Pro", page_icon="🏦", layout="wide")
 
 st.markdown("""
 <style>
     .main { background-color: #f8fafc; }
     .stApp { font-family: 'Inter', sans-serif; }
-    .stMetric { background: white; padding: 15px; border-radius: 12px; border: 1px solid #e2e8f0; }
-    .status-card { padding: 25px; border-radius: 15px; text-align: center; color: white; font-weight: bold; }
-    .stButton button { background-color: #0f172a; color: white; border-radius: 8px; font-weight: 600; }
+    .stMetric { background: white; padding: 15px; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+    .status-card { padding: 25px; border-radius: 15px; text-align: center; color: white; font-weight: bold; margin-bottom: 10px; }
+    .stButton button { background-color: #0f172a; color: white; border-radius: 8px; font-weight: 600; width: 100%; height: 3em; }
+    .sidebar-card { background: #f1f5f9; padding: 10px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #0f172a; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. SMART SEARCH LOGIC ---
-def search_companies(query, is_india):
+# --- 2. DATA UTILITIES ---
+def get_search_results(query, is_india):
     if not query or len(query) < 2: return []
     try:
-        search = yf.Search(query, max_results=8).quotes
-        results = []
-        for res in search:
-            symbol = res['symbol']
-            name = res.get('shortname', res.get('longname', symbol))
-            if is_india:
-                if symbol.endswith(('.NS', '.BO')):
-                    results.append({'label': f"{name} ({symbol})", 'symbol': symbol})
-            else:
-                results.append({'label': f"{name} ({symbol})", 'symbol': symbol})
-        return results
-    except:
-        return []
+        search = yf.Search(query, max_results=5).quotes
+        return [{'label': f"{res.get('shortname', res['symbol'])} ({res['symbol']})", 'symbol': res['symbol']} 
+                for res in search if not is_india or res['symbol'].endswith(('.NS', '.BO'))]
+    except: return []
 
-# --- 3. PRO ANALYSIS ENGINE ---
 def analyze_stock(ticker):
     try:
         stock = yf.Ticker(ticker)
         info = stock.info
         
-        # Financial Data
+        # Fundamental Data
         bal = stock.balance_sheet
         fin = stock.financials
         
-        # Fundamental Calculations
-        mcap = info.get('marketCap', 0)
-        # Fix for missing price: try multiple yfinance price keys
+        # Price & Cap
         price = info.get('currentPrice', info.get('regularMarketPrice', info.get('previousClose', 0)))
+        mcap = info.get('marketCap', 0)
         currency = info.get('currency', 'INR')
         
-        # ROCE Calculation (EBIT / Capital Employed)
-        total_assets = bal.loc['Total Assets'].iloc[0] if 'Total Assets' in bal.index else 1
-        curr_liab = bal.loc['Current Liabilities'].iloc[0] if 'Current Liabilities' in bal.index else 0
-        ebit = fin.loc['EBIT'].iloc[0] if 'EBIT' in fin.index else 0
-        roce = (ebit / (total_assets - curr_liab)) * 100 if (total_assets - curr_liab) > 0 else 0
+        # ROCE Calculation
+        try:
+            total_assets = bal.loc['Total Assets'].iloc[0]
+            curr_liab = bal.loc['Current Liabilities'].iloc[0]
+            ebit = fin.loc['EBIT'].iloc[0]
+            roce = (ebit / (total_assets - curr_liab)) * 100
+        except: roce = info.get('returnOnCapitalEmployed', 0) * 100
+
+        # SAFE DEBT/EQUITY LOGIC
+        # Try ratio first, then manual calculation
+        de = info.get('debtToEquity', 0)
+        if de > 100: de = de / 100 # Adjust for percentage vs decimal
+        elif de == 0:
+            debt = info.get('totalDebt', 0)
+            equity = info.get('totalStockholderEquity', 1)
+            de = debt / equity if equity > 0 else 0
         
-        # Debt Metrics
-        debt = info.get('totalDebt', 0)
-        equity = info.get('totalStockholderEquity', 1)
-        de = debt / equity if equity > 0 else 0
-        
-        # Growth & Shariah
         growth = info.get('revenueGrowth', 0) * 100
-        debt_ratio = (debt / mcap) * 100 if mcap > 0 else 0
+        debt_ratio = (info.get('totalDebt', 0) / mcap) * 100 if mcap > 0 else 0
         cash_ratio = (info.get('totalCash', 0) / mcap) * 100 if mcap > 0 else 0
         
         # Verdicts
-        is_multibagger = roce > 22 and de < 0.3 and growth > 20
-        shariah_compliant = debt_ratio < 30 and cash_ratio < 30
+        is_mb = roce > 22 and de < 0.3 and growth > 20
+        is_shariah = debt_ratio < 30 and cash_ratio < 30
         
-        if is_multibagger: verdict = "HIGH POTENTIAL"
-        elif roce > 15: verdict = "CONSISTENT COMPOUNDER"
-        else: verdict = "VALUE TRAP / AVOID"
+        verdict = "🟢 HIGH POTENTIAL" if is_mb else "🔵 CONSISTENT COMPOUNDER" if roce > 15 else "🔴 VALUE TRAP / AVOID"
         
         return {
-            "name": info.get('longName', ticker),
-            "ticker": ticker, "price": price, "currency": currency,
-            "roce": roce, "de": de, "growth": growth, "mcap": mcap,
-            "verdict": verdict, "shariah": shariah_compliant,
+            "name": info.get('longName', ticker), "ticker": ticker, "price": price, 
+            "curr": "₹" if currency == "INR" else "$", "roce": roce, "de": de, 
+            "growth": growth, "mcap": mcap, "verdict": verdict, "shariah": is_shariah,
             "industry": info.get('industry', 'N/A'), "pe": info.get('trailingPE', 0)
         }
-    except:
-        return None
+    except: return None
 
-# --- 4. INTERFACE ---
+# --- 3. MAIN INTERFACE ---
 def main():
-    st.sidebar.title("💎 Alpha Analyst")
-    is_india = st.sidebar.toggle("🇮🇳 Filter Indian Market (NSE/BSE)", value=True)
+    if 'watchlist' not in st.session_state: st.session_state.watchlist = []
     
-    st.title("🏛️ Institutional Equity Dashboard")
+    st.sidebar.title("💎 Portfolio Mode")
+    is_india = st.sidebar.toggle("🇮🇳 India Only (NSE/BSE)", value=True)
     
-    # Smart Search with Dropdown
-    search_query = st.text_input("Start typing company name...", placeholder="e.g. Reliance, HDFC, Google")
-    
-    selected_ticker = None
-    if search_query:
-        search_results = search_companies(search_query, is_india)
-        if search_results:
-            options = [res['label'] for res in search_results]
-            choice = st.selectbox("Select the correct company from the list:", options)
-            selected_ticker = next(item['symbol'] for item in search_results if item['label'] == choice)
-        else:
-            st.warning("No companies found. Try typing a different name.")
+    st.title("🏛️ Alpha Analyst Pro")
+    st.caption("Institutional Grade Equity Filter & Shariah Compliance")
 
-    if selected_ticker:
-        with st.spinner(f"Analyzing {selected_ticker}..."):
-            data = analyze_stock(selected_ticker)
+    # Smart Search
+    query = st.text_input("Enter Company Name", placeholder="e.g. Reliance, Tata, Apple...")
+    
+    selected_data = None
+    if query:
+        results = get_search_results(query, is_india)
+        if results:
+            choice = st.selectbox("Select Match:", [r['label'] for r in results])
+            ticker = next(r['symbol'] for r in results if r['label'] == choice)
             
-            if data:
-                # HEADER: Name & Live Price
-                st.divider()
-                col_title, col_price = st.columns([3, 1])
-                with col_title:
-                    st.header(data['name'])
-                    st.caption(f"Industry: {data['industry']} | Ticker: {data['ticker']}")
-                with col_price:
-                    symbol_curr = "₹" if data['currency'] == "INR" else "$"
-                    st.markdown(f"<h1 style='text-align:right;'>{symbol_curr}{data['price']:.2f}</h1>", unsafe_allow_html=True)
+            with st.spinner(f"Auditing {ticker}..."):
+                selected_data = analyze_stock(ticker)
+        else:
+            st.warning("No results found. Try a different name.")
 
-                # ROW 1: Metrics
-                st.write("### 📊 Fundamental Audit")
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("ROCE (Avg)", f"{data['roce']:.1f}%", delta="✓" if data['roce']>22 else None)
-                m2.metric("Debt/Equity", f"{data['de']:.2f}", delta="Low" if data['de']<0.3 else None, delta_color="inverse")
-                m3.metric("Revenue Growth", f"{data['growth']:.1f}%")
-                m4.metric("Market Cap", f"{data['mcap']/1e7:.0f} Cr" if is_india else f"{data['mcap']/1e9:.1f} B")
+    if selected_data:
+        # Header Row
+        st.divider()
+        h1, h2 = st.columns([3, 1])
+        with h1:
+            st.header(selected_data['name'])
+            st.caption(f"{selected_data['industry']} | {selected_data['ticker']}")
+        with h2:
+            st.markdown(f"<h1 style='text-align:right;'>{selected_data['curr']}{selected_data['price']:.2f}</h1>", unsafe_allow_html=True)
+            if st.button("➕ Add to Watchlist"):
+                if selected_data['ticker'] not in [x['ticker'] for x in st.session_state.watchlist]:
+                    st.session_state.watchlist.append(selected_data)
+                    st.toast("Saved!")
 
-                # ROW 2: Institutional Verdicts
-                st.divider()
-                v1, v2 = st.columns(2)
-                
-                with v1:
-                    color = "#10b981" if "HIGH" in data['verdict'] else "#3b82f6" if "CONSISTENT" in data['verdict'] else "#ef4444"
-                    st.markdown(f"""<div class="status-card" style="background-color:{color};">
-                        <p style="margin:0; font-size:14px; opacity:0.8;">INVESTMENT VERDICT</p>
-                        <h2 style="margin:0; color:white;">{data['verdict']}</h2>
-                    </div>""", unsafe_allow_html=True)
-                
-                with v2:
-                    s_color = "#059669" if data['shariah'] else "#991b1b"
-                    s_text = "SHARIAH COMPLIANT" if data['shariah'] else "NON-COMPLIANT"
-                    st.markdown(f"""<div class="status-card" style="background-color:{s_color};">
-                        <p style="margin:0; font-size:14px; opacity:0.8;">ETHICAL STATUS</p>
-                        <h2 style="margin:0; color:white;">{s_text}</h2>
-                    </div>""", unsafe_allow_html=True)
+        # Fundamentals Row
+        st.write("### 📊 Fundamental Audit")
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("ROCE (Avg)", f"{selected_data['roce']:.1f}%")
+        # Fixed D/E formatting
+        m2.metric("Debt/Equity", f"{selected_data['de']:.2f}")
+        m3.metric("Revenue Growth", f"{selected_data['growth']:.1f}%")
+        mcap_val = f"{selected_data['mcap']/1e7:.0f} Cr" if is_india else f"{selected_data['mcap']/1e9:.1f} B"
+        m4.metric("Market Cap", mcap_val)
 
-                # SIDEBAR: Portfolio Tracking
-                if st.button("📁 Save to Portfolio"):
-                    if 'p_list' not in st.session_state: st.session_state.p_list = []
-                    st.session_state.p_list.append(data)
-                    st.success(f"Added {data['ticker']} to your portfolio!")
+        # Verdicts
+        v1, v2 = st.columns(2)
+        with v1:
+            color = "#10b981" if "HIGH" in selected_data['verdict'] else "#3b82f6" if "CONSISTENT" in selected_data['verdict'] else "#ef4444"
+            st.markdown(f'<div class="status-card" style="background:{color};"><p style="font-size:12px; opacity:0.8;">PMS VERDICT</p><h2>{selected_data['verdict']}</h2></div>', unsafe_allow_html=True)
+        with v2:
+            s_color = "#059669" if selected_data['shariah'] else "#991b1b"
+            s_text = "SHARIAH COMPLIANT" if selected_data['shariah'] else "NON-COMPLIANT"
+            st.markdown(f'<div class="status-card" style="background:{s_color};"><p style="font-size:12px; opacity:0.8;">SHARIAH STATUS</p><h2>{s_text}</h2></div>', unsafe_allow_html=True)
 
-    # Display Portfolio
-    if 'p_list' in st.session_state and st.session_state.p_list:
+        # Export
+        st.divider()
+        report = f"STOCK REPORT: {selected_data['name']}\nPrice: {selected_data['price']}\nROCE: {selected_data['roce']:.2f}%\nVerdict: {selected_data['verdict']}"
+        st.download_button("📂 Download Institutional PDF Report", report, file_name=f"{selected_data['ticker']}_Alpha_Report.txt")
+
+    # Sidebar Watchlist
+    if st.session_state.watchlist:
         st.sidebar.divider()
-        st.sidebar.subheader("My Portfolio")
-        for p in st.session_state.p_list:
-            st.sidebar.write(f"**{p['ticker']}**: {p['price']:.2f}")
+        st.sidebar.subheader("My Watchlist")
+        for item in st.session_state.watchlist:
+            st.sidebar.markdown(f"""<div class="sidebar-card">
+                <b>{item['ticker']}</b><br>
+                <small>{item['verdict']}</small><br>
+                <b>{item['curr']}{item['price']:.2f}</b>
+            </div>""", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
